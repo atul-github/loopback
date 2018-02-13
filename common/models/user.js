@@ -204,7 +204,7 @@ module.exports = function(User) {
    * @promise
    */
 
-  User.login = function(credentials, include, fn) {
+  User.login = function(credentials, include, options, fn) {
     var self = this;
     if (typeof include === 'function') {
       fn = include;
@@ -247,7 +247,7 @@ module.exports = function(User) {
       return fn.promise;
     }
 
-    self.findOne({where: query}, function(err, user) {
+    self.findOne({where: query}, options, function(err, user) {
       var defaultError = new Error(g.f('login failed'));
       defaultError.statusCode = 401;
       defaultError.code = 'LOGIN_FAILED';
@@ -289,7 +289,7 @@ module.exports = function(User) {
               if (user.createAccessToken.length === 2) {
                 user.createAccessToken(credentials.ttl, tokenHandler);
               } else {
-                user.createAccessToken(credentials.ttl, credentials, tokenHandler);
+                user.createAccessToken(credentials.ttl, options, tokenHandler);
               }
             }
           } else {
@@ -320,7 +320,7 @@ module.exports = function(User) {
    * @promise
    */
 
-  User.logout = function(tokenId, fn) {
+  User.logout = function(tokenId, options, fn) {
     fn = fn || utils.createPromiseCallback();
 
     var err;
@@ -331,7 +331,7 @@ module.exports = function(User) {
       return fn.promise;
     }
 
-    this.relations.accessTokens.modelTo.destroyById(tokenId, function(err, info) {
+    this.relations.accessTokens.modelTo.destroyById(tokenId, options, function(err, info) {
       if (err) {
         fn(err);
       } else if ('count' in info && info.count === 0) {
@@ -348,14 +348,15 @@ module.exports = function(User) {
   User.observe('before delete', function(ctx, next) {
     var AccessToken = ctx.Model.relations.accessTokens.modelTo;
     var pkName = ctx.Model.definition.idName() || 'id';
-    ctx.Model.find({where: ctx.where, fields: [pkName]}, function(err, list) {
+    var options = ctx.options;
+    ctx.Model.find({where: ctx.where, fields: [pkName]}, options, function(err, list) {
       if (err) return next(err);
 
       var ids = list.map(function(u) { return u[pkName]; });
       ctx.where = {};
       ctx.where[pkName] = {inq: ids};
 
-      AccessToken.destroyAll({userId: {inq: ids}}, next);
+      AccessToken.destroyAll({userId: {inq: ids}}, options, next);
     });
   });
 
@@ -867,16 +868,16 @@ module.exports = function(User) {
    * @param {Error} err
    * @promise
    */
-  User.confirm = function(uid, token, redirect, fn) {
+  User.confirm = function(uid, token, redirect, options, fn) {
     fn = fn || utils.createPromiseCallback();
-    this.findById(uid, function(err, user) {
+    this.findById(uid, options, function(err, user) {
       if (err) {
         fn(err);
       } else {
         if (user && user.verificationToken === token) {
           user.verificationToken = null;
           user.emailVerified = true;
-          user.save(function(err) {
+          user.save(options, function(err) {
             if (err) {
               fn(err);
             } else {
@@ -912,12 +913,12 @@ module.exports = function(User) {
    * @promise
    */
 
-  User.resetPassword = function(options, cb) {
+  User.resetPassword = function(data, options, cb) {
     cb = cb || utils.createPromiseCallback();
     var UserModel = this;
     var ttl = UserModel.settings.resetPasswordTokenTTL || DEFAULT_RESET_PW_TTL;
-    options = options || {};
-    if (typeof options.email !== 'string') {
+    data = data|| {};
+    if (typeof data.email !== 'string') {
       var err = new Error(g.f('Email is required'));
       err.statusCode = 400;
       err.code = 'EMAIL_REQUIRED';
@@ -926,19 +927,19 @@ module.exports = function(User) {
     }
 
     try {
-      if (options.password) {
-        UserModel.validatePassword(options.password);
+      if (data.password) {
+        UserModel.validatePassword(data.password);
       }
     } catch (err) {
       return cb(err);
     }
     var where = {
-      email: options.email,
+      email: data.email,
     };
-    if (options.realm) {
-      where.realm = options.realm;
+    if (data.realm) {
+      where.realm = data.realm;
     }
-    UserModel.findOne({where: where}, function(err, user) {
+    UserModel.findOne({where: where}, options, function(err, user) {
       if (err) {
         return cb(err);
       }
@@ -968,7 +969,7 @@ module.exports = function(User) {
         // user-supplied implementations of "createAccessToken"
         // that may not support "options" argument (we have such
         // examples in our test suite).
-        user.createAccessToken(ttl, onTokenCreated);
+        user.createAccessToken(ttl, options, onTokenCreated);
       }
 
       function onTokenCreated(err, accessToken) {
@@ -977,10 +978,10 @@ module.exports = function(User) {
         }
         cb();
         UserModel.emit('resetPasswordRequest', {
-          email: options.email,
+          email: data.email,
           accessToken: accessToken,
           user: user,
-          options: options,
+          options: data,
         });
       }
     });
@@ -1099,6 +1100,7 @@ module.exports = function(User) {
           {arg: 'include', type: ['string'], http: {source: 'query'},
             description: 'Related objects to include in the response. ' +
             'See the description of return value for more details.'},
+          { arg: 'options', type: 'object', required: true, http:  'optionsFromRequest' },
         ],
         returns: {
           arg: 'accessToken', type: 'object', root: true,
@@ -1127,6 +1129,7 @@ module.exports = function(User) {
           }, description: 'Do not supply this argument, it is automatically extracted ' +
             'from request headers.',
           },
+          { arg: 'options', type: 'object', required: true, http: 'optionsFromRequest' },
         ],
         http: {verb: 'all'},
       }
@@ -1151,7 +1154,8 @@ module.exports = function(User) {
         accepts: [
           {arg: 'uid', type: 'string', required: true},
           {arg: 'token', type: 'string', required: true},
-          {arg: 'redirect', type: 'string'},
+          { arg: 'redirect', type: 'string' },
+          { arg: 'options', type: 'object', http: 'optionsFromRequest' },
         ],
         http: {verb: 'get', path: '/confirm'},
       }
@@ -1162,7 +1166,8 @@ module.exports = function(User) {
       {
         description: 'Reset password for a user with email.',
         accepts: [
-          {arg: 'options', type: 'object', required: true, http: {source: 'body'}},
+          { arg: 'credentials', type: 'object', required: true, http: { source: 'body' } },
+          { arg: 'options', type: 'object', required: true, http: 'optionsFromRequest' },
         ],
         http: {verb: 'post', path: '/reset'},
       }
@@ -1327,8 +1332,8 @@ module.exports = function(User) {
       where = {};
       where[pkName] = ctx.instance[pkName];
     }
-
-    ctx.Model.find({where: where}, ctx.options, function(err, userInstances) {
+    var options = ctx.options;
+    ctx.Model.find({where: where}, options, function(err, userInstances) {
       if (err) return next(err);
       ctx.hookState.originalUserData = userInstances.map(function(u) {
         var user = {};

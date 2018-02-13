@@ -170,8 +170,12 @@ module.exports = function(AccessToken) {
    * @param {Error} err Error information
    * @param {Object} Resolved access token object
    */
-  AccessToken.resolve = function(id, cb) {
-    this.findById(id, function(err, token) {
+  AccessToken.resolve = function (id, options, cb) {
+    if (cb === undefined && typeof options === 'function') {
+      cb = options;
+      options = {};
+    }
+    this.findById(id, options, function(err, token) {
       if (err) {
         cb(err);
       } else if (token) {
@@ -211,7 +215,7 @@ module.exports = function(AccessToken) {
     var id = this.getIdForRequest(req, options);
 
     if (id) {
-      this.resolve(id, cb);
+      this.resolve(id, options, cb);
     } else {
       process.nextTick(cb);
     }
